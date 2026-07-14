@@ -59,6 +59,17 @@ def normalize_guest_code(series: pd.Series) -> pd.Series:
     return cleaned.mask(is_blank)
 
 
+def normalize_text(series: pd.Series) -> pd.Series:
+    """
+    Aggressively normalize free text (lowercase, strip everything but
+    letters/digits) so the same real value survives punctuation/spacing
+    differences between two exports of the same field -- e.g. one report's
+    Package Name has "+" between items and another's has a plain space in
+    the same spot ("2SS PEEL FACE + 2SS LASER" vs "2SS PEEL FACE  2SS LASER").
+    """
+    return series.astype(str).str.lower().str.replace(r"[^a-z0-9]", "", regex=True)
+
+
 def dedupe_by_key(df: pd.DataFrame, key_col: str) -> tuple[pd.DataFrame, int]:
     """Drop exact-duplicate key rows, keeping the first occurrence. Returns (df, n_dropped)."""
     before = len(df)

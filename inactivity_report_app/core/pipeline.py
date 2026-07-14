@@ -47,7 +47,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from core.cleaning import dedupe_by_key, normalize_guest_code, parse_mixed_dates
+from core.cleaning import dedupe_by_key, normalize_guest_code, normalize_text, parse_mixed_dates
 from core.io_utils import ResolvedReport
 
 INACTIVITY_THRESHOLD_DAYS = 60
@@ -81,6 +81,8 @@ class PipelineStats:
     benefit_raw_rows: int = 0
     benefit_has_guest_code: bool = False
     benefit_blank_guest_code_rows: int = 0
+    invoicing_colliding_invoice_numbers: int = 0
+    benefit_ambiguous_unresolved_rows: int = 0
 
 
 def _select_and_rename(resolved: ResolvedReport, rename_map: dict[str, str]) -> pd.DataFrame:
@@ -158,12 +160,23 @@ def build_report(
     base = base.drop_duplicates(subset=["guest_code", "invoice_no"], keep="first")
     stats.invoice_rows_after_expand = len(base)
 
+    # Invoice No is not always unique across guests -- the SAME invoice number
+    # can legitimately belong to two different people's two different
+    # packages. This matters below when the Benefit Report has no Guest Code
+    # to join on: joining by Invoice No alone would silently mix those two
+    # guests' balance/status together. Package Name (normalized) is used as a
+    # tiebreaker in that case, so track it here.
+    invoice_guest_counts = base.groupby("invoice_no")["guest_code"].nunique()
+    stats.invoicing_colliding_invoice_numbers = int((invoice_guest_counts > 1).sum())
+    if "package_name" in base.columns:
+        base["_package_name_norm"] = normalize_text(base["package_name"])
+
     # --- Step 3: attach last visit date ---------------------------------
     merged = base.merge(visits, on="guest_code", how="left")
     stats.guests_without_last_visit = int(merged["last_visit_date"].isna().sum())
 
     # --- Step 4: attach balance sessions -------------------------------
-    benefit_fields = {k: k for k in ["guest_code", "invoice_no", "balance_qty", "package_status"]}
+    benefit_fields = {k: k for k in ["guest_code", "invoice_no", "balance_qty", "package_status", "package_name"]}
     benefits = _select_and_rename(benefit_report, benefit_fields)
     stats.benefit_sheet_name = benefit_report.sheet_name
     stats.benefit_raw_rows = len(benefits)
@@ -175,10 +188,30 @@ def build_report(
         benefits = benefits[benefits["guest_code"].notna()].copy()
     benefits["balance_qty"] = pd.to_numeric(benefits["balance_qty"], errors="coerce")
 
-    # Some locations' Benefit Report has no guest identifier column at all; in
-    # that case fall back to joining on Invoice No alone (still unique per
-    # package) instead of (Guest Code, Invoice No).
-    benefit_join_keys = ["guest_code", "invoice_no"] if has_benefit_guest_code else ["invoice_no"]
+    # Some locations' Benefit Report has no guest identifier column at all.
+    # Invoice No alone isn't always a safe fallback join key either -- the
+    # SAME invoice number can legitimately belong to two different guests'
+    # two different packages (see the collision check above), which would
+    # otherwise silently mix their balance/status together. When the Benefit
+    # Report also has Package Name, use a normalized (Invoice No, Package
+    # Name) pair to disambiguate -- this resolved every real collision found
+    # in testing. If Package Name isn't available either, fall back to
+    # Invoice No alone and flag the unresolved risk.
+    use_package_name_tiebreak = (
+        not has_benefit_guest_code
+        and "package_name" in benefits.columns
+        and "_package_name_norm" in base.columns
+    )
+    if has_benefit_guest_code:
+        benefit_join_keys = ["guest_code", "invoice_no"]
+    elif use_package_name_tiebreak:
+        benefits["_package_name_norm"] = normalize_text(benefits["package_name"])
+        benefit_join_keys = ["invoice_no", "_package_name_norm"]
+    else:
+        benefit_join_keys = ["invoice_no"]
+        if stats.invoicing_colliding_invoice_numbers:
+            colliding_invoices = invoice_guest_counts[invoice_guest_counts > 1].index
+            stats.benefit_ambiguous_unresolved_rows = int(merged["invoice_no"].isin(colliding_invoices).sum())
 
     agg = {"balance_qty": lambda s: s.sum(min_count=1)}  # all-NaN group -> NaN, not a false 0
     if "package_status" in benefits.columns:
@@ -237,6 +270,23 @@ def build_report(
             "indicates a data or matching problem -- do not trust this report until resolved."
         )
 
+    if stats.invoicing_colliding_invoice_numbers:
+        if stats.benefit_ambiguous_unresolved_rows:
+            stats.notes.append(
+                f"DATA INTEGRITY WARNING: {stats.invoicing_colliding_invoice_numbers} "
+                "Invoice No value(s) in the Package Invoicing Report are shared by two or "
+                "more different guests. The Package Benefit Report has no Guest Code or "
+                "Package Name to disambiguate them, so "
+                f"{stats.benefit_ambiguous_unresolved_rows} row(s) may have another guest's "
+                "balance/status incorrectly attached -- do not trust those rows until resolved."
+            )
+        else:
+            stats.notes.append(
+                f"{stats.invoicing_colliding_invoice_numbers} Invoice No value(s) in the "
+                "Package Invoicing Report are shared by two or more different guests. "
+                "Package Name was used to correctly tell them apart when matching the "
+                "Package Benefit Report."
+            )
     if stats.invoicing_rows_outside_visit_scope:
         stats.notes.append(
             f"{stats.invoicing_rows_outside_visit_scope} row(s) in the Package "
