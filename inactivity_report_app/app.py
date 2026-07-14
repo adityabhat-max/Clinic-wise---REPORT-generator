@@ -70,7 +70,11 @@ if generate:
             st.write("**Package Invoicing Report**")
             st.write(
                 f"- Sheet read: `{stats.invoicing_sheet_name}` — {stats.invoicing_raw_rows} row(s), "
-                f"{stats.invoicing_unique_guests} unique guest(s)"
+                f"{stats.invoicing_unique_guests_before_scope} unique guest(s) before location scoping"
+            )
+            st.write(
+                f"- {stats.invoicing_rows_outside_visit_scope} row(s) excluded as outside the "
+                f"Visit Report's location scope — {stats.invoicing_unique_guests} unique guest(s) remain"
             )
             st.write("**Org / Latest-Visit Guest Report**")
             st.write(

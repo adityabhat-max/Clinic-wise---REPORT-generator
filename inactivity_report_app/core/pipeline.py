@@ -8,19 +8,26 @@ Report and Package Invoicing Report are themselves shaped (one row per
 invoice).
 
 Pipeline steps (see README for the full write-up):
-  1. Base = Package Invoicing Report, one row per package invoice, deduped
-     on (Guest Code, Package Invoice No). There is no separate guest roster
-     input -- every guest with at least one invoice is in scope.
-  2. Attach Last Visit Date from the Org/Latest-Visit Guest Report.
-  3. Attach Balance Sessions from the Package Benefit Report, summed across
+  1. Load the Org/Latest-Visit Guest Report and take its set of Guest Codes.
+     This report is the one reliably scoped to a single location at export
+     time (Zenoti exports it pre-filtered by center) -- the Invoicing and
+     Benefit Reports are NOT guaranteed to be, and can come back as
+     org-wide dumps covering every location. That guest-code set is used
+     as an implicit location filter in step 2.
+  2. Base = Package Invoicing Report, restricted to only guest codes that
+     are also present in the Visit Report (see step 1), deduped on (Guest
+     Code, Package Invoice No). Rows for guests outside that scope (i.e.
+     a different location) are dropped and counted.
+  3. Attach Last Visit Date from the Visit Report loaded in step 1.
+  4. Attach Balance Sessions from the Package Benefit Report, summed across
      that report's benefit-type rows for a given invoice (a package with
      several benefit lines is only "fully redeemed" once every one of them
      is at zero balance).
-  4. Compute Inactive Days = today - Last Visit Date.
-  5. Determine each package's effective status (prefers the Package Benefit
+  5. Compute Inactive Days = today - Last Visit Date.
+  6. Determine each package's effective status (prefers the Package Benefit
      Report's status, falls back to the Invoicing Report's status when a
      package has no benefit-detail match).
-  6. A package makes the final report if EITHER:
+  7. A package makes the final report if EITHER:
        a) status is Closed AND Balance Sessions == 0 AND Inactive Days >= threshold
           ("fully redeemed and gone quiet"), or
        b) status is Active AND Inactive Days >= threshold
@@ -29,7 +36,8 @@ Pipeline steps (see README for the full write-up):
      "Match Reason" showing which rule (a or b) included it.
 
 build_report() returns (full_list, final, stats):
-  - full_list: every invoiced guest x their packages, UNFILTERED.
+  - full_list: every invoiced guest x their packages, scoped to the Visit
+    Report's location (see step 1-2), unfiltered by the inactivity rules.
   - final: full_list filtered down by the inclusion rules above -- the
     actionable "who to follow up with" report.
 """
@@ -61,6 +69,8 @@ class PipelineStats:
     invoicing_sheet_name: str = ""
     invoicing_raw_rows: int = 0
     invoicing_unique_guests: int = 0
+    invoicing_unique_guests_before_scope: int = 0
+    invoicing_rows_outside_visit_scope: int = 0
     invoicing_blank_guest_code_rows: int = 0
     visit_sheet_name: str = ""
     visit_raw_rows: int = 0
@@ -107,24 +117,12 @@ def build_report(
     stats = PipelineStats()
     today = (today or pd.Timestamp.now()).normalize()
 
-    # --- Step 1: base = one row per package invoice --------------------
-    invoice_fields = {k: k for k in ["guest_code", "invoice_no", "package_name", "package_start_date", "status"]}
-    base = _select_and_rename(invoicing_report, invoice_fields)
-    base["guest_code"] = normalize_guest_code(base["guest_code"])
-    base["package_start_date"] = parse_mixed_dates(base["package_start_date"])
-    stats.invoicing_sheet_name = invoicing_report.sheet_name
-    stats.invoicing_raw_rows = len(base)
-    stats.invoicing_blank_guest_code_rows = int(base["guest_code"].isna().sum())
-    # Rows with no Guest Code at all can't be attributed to anyone -- drop
-    # them rather than letting them silently collapse into one fake shared
-    # "guest" (which is what happened before: every blank code normalized to
-    # the literal text "None"/"nan", making unrelated rows look like matches).
-    base = base[base["guest_code"].notna()].copy()
-    stats.invoicing_unique_guests = int(base["guest_code"].nunique())
-    base = base.drop_duplicates(subset=["guest_code", "invoice_no"], keep="first")
-    stats.invoice_rows_after_expand = len(base)
-
-    # --- Step 2: attach last visit date -------------------------------
+    # --- Step 1: load the Visit Report and take its guest-code set -----
+    # This report is the one reliably scoped to a single location at export
+    # time. Its guest-code set is used below as an implicit location filter
+    # on the Invoicing Report, since that report (and the Benefit Report)
+    # can come back as an org-wide export covering every location instead
+    # of just the one being reported on.
     visit_fields = {k: k for k in ["guest_code", "last_visit_date"]}
     visits = _select_and_rename(visit_report, visit_fields)
     visits["guest_code"] = normalize_guest_code(visits["guest_code"])
@@ -137,10 +135,34 @@ def build_report(
     visits, dropped = dedupe_by_key(visits, "guest_code")
     stats.visit_duplicates_dropped = dropped
 
+    visit_guest_codes = set(visits["guest_code"])
+
+    # --- Step 2: base = one row per package invoice, scoped to the Visit
+    #             Report's guests ---------------------------------------
+    invoice_fields = {k: k for k in ["guest_code", "invoice_no", "package_name", "package_start_date", "status"]}
+    base = _select_and_rename(invoicing_report, invoice_fields)
+    base["guest_code"] = normalize_guest_code(base["guest_code"])
+    base["package_start_date"] = parse_mixed_dates(base["package_start_date"])
+    stats.invoicing_sheet_name = invoicing_report.sheet_name
+    stats.invoicing_raw_rows = len(base)
+    stats.invoicing_blank_guest_code_rows = int(base["guest_code"].isna().sum())
+    # Rows with no Guest Code at all can't be attributed to anyone -- drop
+    # them rather than letting them silently collapse into one fake shared
+    # "guest" (which is what happened before: every blank code normalized to
+    # the literal text "None"/"nan", making unrelated rows look like matches).
+    base = base[base["guest_code"].notna()].copy()
+    stats.invoicing_unique_guests_before_scope = int(base["guest_code"].nunique())
+    stats.invoicing_rows_outside_visit_scope = int((~base["guest_code"].isin(visit_guest_codes)).sum())
+    base = base[base["guest_code"].isin(visit_guest_codes)].copy()
+    stats.invoicing_unique_guests = int(base["guest_code"].nunique())
+    base = base.drop_duplicates(subset=["guest_code", "invoice_no"], keep="first")
+    stats.invoice_rows_after_expand = len(base)
+
+    # --- Step 3: attach last visit date ---------------------------------
     merged = base.merge(visits, on="guest_code", how="left")
     stats.guests_without_last_visit = int(merged["last_visit_date"].isna().sum())
 
-    # --- Step 3: attach balance sessions -------------------------------
+    # --- Step 4: attach balance sessions -------------------------------
     benefit_fields = {k: k for k in ["guest_code", "invoice_no", "balance_qty", "package_status"]}
     benefits = _select_and_rename(benefit_report, benefit_fields)
     stats.benefit_sheet_name = benefit_report.sheet_name
@@ -166,11 +188,11 @@ def build_report(
     merged = merged.merge(benefit_totals, on=benefit_join_keys, how="left", suffixes=("", "_benefit"))
     stats.invoices_without_benefit_match = int(merged["balance_qty"].isna().sum())
 
-    # --- Step 4: balance + inactivity -----------------------------------
+    # --- Step 5: balance + inactivity -----------------------------------
     merged["balance_sessions"] = merged["balance_qty"]
     merged["inactive_days"] = (today - merged["last_visit_date"]).dt.days
 
-    # --- Step 5: effective status (Benefit Report status wins, falls back
+    # --- Step 6: effective status (Benefit Report status wins, falls back
     #             to Invoicing Report status when there's no benefit match) ---
     has_package_status = "package_status" in merged.columns
     has_invoicing_status = "status" in merged.columns
@@ -184,7 +206,7 @@ def build_report(
         merged["effective_status"] = pd.NA
     status_norm = merged["effective_status"].astype(str).str.strip().str.lower()
 
-    # --- Step 6: inclusion rules -----------------------------------------
+    # --- Step 7: inclusion rules -----------------------------------------
     inactive_enough = merged["inactive_days"] >= inactivity_threshold_days
     closed_redeemed_inactive = (
         (status_norm == "closed") & (merged["balance_sessions"] == 0) & inactive_enough
@@ -215,6 +237,14 @@ def build_report(
             "indicates a data or matching problem -- do not trust this report until resolved."
         )
 
+    if stats.invoicing_rows_outside_visit_scope:
+        stats.notes.append(
+            f"{stats.invoicing_rows_outside_visit_scope} row(s) in the Package "
+            "Invoicing Report belonged to a guest not present in the Org/"
+            "Latest-Visit Report (i.e. likely a different location) and were "
+            "excluded from scope. The Invoicing/Benefit Report exports may not "
+            "be filtered to a single location the way the Visit Report is."
+        )
     if stats.invoicing_blank_guest_code_rows:
         stats.notes.append(
             f"{stats.invoicing_blank_guest_code_rows} row(s) in the Package "
@@ -245,7 +275,8 @@ def build_report(
             "be evaluated for the Fully-Redeemed rule (balance unknown)."
         )
 
-    # full_list = every invoiced guest x their packages, unfiltered, carried
+    # full_list = every invoiced guest x their packages, scoped to the Visit
+    # Report's location and unfiltered by the inactivity rules, carried
     # through with the enrichment columns (visit date, balance, status) attached.
     full_list = _format_display(merged)
     final = _format_display(final)
