@@ -87,7 +87,11 @@ VISIT_REPORT_SCHEMA = ReportSchema(
 PACKAGE_BENEFIT_SCHEMA = ReportSchema(
     report_label="Package Benefit Report",
     fields=[
-        FieldSpec("guest_code", ["Guest Code", "GuestCode", "UserCode", "*guest"]),
+        # Some locations' Package Benefit Report has no guest identifier column
+        # at all (only Guest Name, which isn't a reliable join key) -- so this
+        # is optional here. When absent, the pipeline joins this report to the
+        # rest of the data on Invoice No alone instead of (Guest Code, Invoice No).
+        FieldSpec("guest_code", ["Guest Code", "GuestCode", "UserCode", "*guest"], required=False),
         FieldSpec("invoice_no", ["Invoice No", "InvoiceNo", "Invoice Number"]),
         FieldSpec("balance_qty", ["Balance Quantity", "Balance Sessions", "BalanceQty", "Balance"]),
         FieldSpec("package_status", ["Package Status", "PackageStatus", "Status"], required=False),

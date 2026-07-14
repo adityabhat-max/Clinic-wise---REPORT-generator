@@ -111,15 +111,22 @@ def build_report(
     # --- Step 3: attach balance sessions -------------------------------
     benefit_fields = {k: k for k in ["guest_code", "invoice_no", "balance_qty", "package_status"]}
     benefits = _select_and_rename(benefit_report, benefit_fields)
-    benefits["guest_code"] = normalize_guest_code(benefits["guest_code"])
+    has_benefit_guest_code = "guest_code" in benefits.columns
+    if has_benefit_guest_code:
+        benefits["guest_code"] = normalize_guest_code(benefits["guest_code"])
     benefits["balance_qty"] = pd.to_numeric(benefits["balance_qty"], errors="coerce")
+
+    # Some locations' Benefit Report has no guest identifier column at all; in
+    # that case fall back to joining on Invoice No alone (still unique per
+    # package) instead of (Guest Code, Invoice No).
+    benefit_join_keys = ["guest_code", "invoice_no"] if has_benefit_guest_code else ["invoice_no"]
 
     agg = {"balance_qty": lambda s: s.sum(min_count=1)}  # all-NaN group -> NaN, not a false 0
     if "package_status" in benefits.columns:
         agg["package_status"] = "first"
-    benefit_totals = benefits.groupby(["guest_code", "invoice_no"], as_index=False).agg(agg)
+    benefit_totals = benefits.groupby(benefit_join_keys, as_index=False).agg(agg)
 
-    merged = merged.merge(benefit_totals, on=["guest_code", "invoice_no"], how="left", suffixes=("", "_benefit"))
+    merged = merged.merge(benefit_totals, on=benefit_join_keys, how="left", suffixes=("", "_benefit"))
     stats.invoices_without_benefit_match = int(merged["balance_qty"].isna().sum())
 
     # --- Step 4: balance + inactivity -----------------------------------
