@@ -104,9 +104,19 @@ _DISPLAY_RENAME = {
 }
 
 
+_DATE_DISPLAY_COLUMNS = ["Package Creation Date", "Last Visit Date"]
+
+
 def _format_display(df: pd.DataFrame) -> pd.DataFrame:
     cols = [c for c in _DISPLAY_RENAME if c in df.columns]
-    return df[cols].rename(columns=_DISPLAY_RENAME)
+    out = df[cols].rename(columns=_DISPLAY_RENAME)
+    # Render as "08-May-2024" instead of pandas' default YYYY-MM-DD -- the
+    # month name makes the date unambiguous regardless of whether the reader
+    # expects DD-MM-YYYY or MM-DD-YYYY, which ISO order gets misread as.
+    for col in _DATE_DISPLAY_COLUMNS:
+        if col in out.columns:
+            out[col] = out[col].dt.strftime("%d-%b-%Y")
+    return out
 
 
 def build_report(
