@@ -45,8 +45,18 @@ def parse_mixed_dates(series: pd.Series) -> pd.Series:
 
 
 def normalize_guest_code(series: pd.Series) -> pd.Series:
-    """Trim whitespace so ' ISAAC/BLR/050' and 'ISAAC/BLR/050' match."""
-    return series.astype(str).str.strip()
+    """
+    Trim whitespace so ' ISAAC/BLR/050' and 'ISAAC/BLR/050' match.
+
+    Blank/missing values are normalized to a true missing value (NaN), not
+    the literal text "nan"/"None" that `.astype(str)` would otherwise produce.
+    Otherwise every row with a missing guest code would look like the SAME
+    guest to the rest of the pipeline (a false match across unrelated rows),
+    instead of being correctly treated as unidentifiable.
+    """
+    cleaned = series.astype(str).str.strip()
+    is_blank = series.isna() | cleaned.str.lower().isin(["", "nan", "none"])
+    return cleaned.mask(is_blank)
 
 
 def dedupe_by_key(df: pd.DataFrame, key_col: str) -> tuple[pd.DataFrame, int]:

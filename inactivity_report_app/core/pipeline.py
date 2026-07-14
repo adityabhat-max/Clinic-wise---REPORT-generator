@@ -61,13 +61,16 @@ class PipelineStats:
     invoicing_sheet_name: str = ""
     invoicing_raw_rows: int = 0
     invoicing_unique_guests: int = 0
+    invoicing_blank_guest_code_rows: int = 0
     visit_sheet_name: str = ""
     visit_raw_rows: int = 0
     visit_unique_guests: int = 0
     visit_duplicates_dropped: int = 0
+    visit_blank_guest_code_rows: int = 0
     benefit_sheet_name: str = ""
     benefit_raw_rows: int = 0
     benefit_has_guest_code: bool = False
+    benefit_blank_guest_code_rows: int = 0
 
 
 def _select_and_rename(resolved: ResolvedReport, rename_map: dict[str, str]) -> pd.DataFrame:
@@ -111,6 +114,12 @@ def build_report(
     base["package_start_date"] = parse_mixed_dates(base["package_start_date"])
     stats.invoicing_sheet_name = invoicing_report.sheet_name
     stats.invoicing_raw_rows = len(base)
+    stats.invoicing_blank_guest_code_rows = int(base["guest_code"].isna().sum())
+    # Rows with no Guest Code at all can't be attributed to anyone -- drop
+    # them rather than letting them silently collapse into one fake shared
+    # "guest" (which is what happened before: every blank code normalized to
+    # the literal text "None"/"nan", making unrelated rows look like matches).
+    base = base[base["guest_code"].notna()].copy()
     stats.invoicing_unique_guests = int(base["guest_code"].nunique())
     base = base.drop_duplicates(subset=["guest_code", "invoice_no"], keep="first")
     stats.invoice_rows_after_expand = len(base)
@@ -122,6 +131,8 @@ def build_report(
     visits["last_visit_date"] = parse_mixed_dates(visits["last_visit_date"])
     stats.visit_sheet_name = visit_report.sheet_name
     stats.visit_raw_rows = len(visits)
+    stats.visit_blank_guest_code_rows = int(visits["guest_code"].isna().sum())
+    visits = visits[visits["guest_code"].notna()].copy()
     stats.visit_unique_guests = int(visits["guest_code"].nunique())
     visits, dropped = dedupe_by_key(visits, "guest_code")
     stats.visit_duplicates_dropped = dropped
@@ -138,6 +149,8 @@ def build_report(
     stats.benefit_has_guest_code = has_benefit_guest_code
     if has_benefit_guest_code:
         benefits["guest_code"] = normalize_guest_code(benefits["guest_code"])
+        stats.benefit_blank_guest_code_rows = int(benefits["guest_code"].isna().sum())
+        benefits = benefits[benefits["guest_code"].notna()].copy()
     benefits["balance_qty"] = pd.to_numeric(benefits["balance_qty"], errors="coerce")
 
     # Some locations' Benefit Report has no guest identifier column at all; in
@@ -202,6 +215,22 @@ def build_report(
             "indicates a data or matching problem -- do not trust this report until resolved."
         )
 
+    if stats.invoicing_blank_guest_code_rows:
+        stats.notes.append(
+            f"{stats.invoicing_blank_guest_code_rows} row(s) in the Package "
+            "Invoicing Report had no Guest Code at all and were excluded "
+            "entirely (they can't be attributed to any guest)."
+        )
+    if stats.visit_blank_guest_code_rows:
+        stats.notes.append(
+            f"{stats.visit_blank_guest_code_rows} row(s) in the Org/Latest-Visit "
+            "Report had no Guest Code at all and were ignored."
+        )
+    if stats.benefit_blank_guest_code_rows:
+        stats.notes.append(
+            f"{stats.benefit_blank_guest_code_rows} row(s) in the Package "
+            "Benefit Report had no Guest Code at all and were ignored."
+        )
     if stats.guests_without_last_visit:
         stats.notes.append(
             f"{stats.guests_without_last_visit} guest(s) had no match in the "
