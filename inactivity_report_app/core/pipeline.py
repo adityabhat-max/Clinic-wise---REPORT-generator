@@ -54,6 +54,20 @@ class PipelineStats:
     final_closed_redeemed: int = 0
     final_active_unused: int = 0
     notes: list[str] = field(default_factory=list)
+    # Per-source diagnostics -- which sheet was actually read, and the raw
+    # row/unique-guest counts in each file BEFORE any merging, so a mismatch
+    # between "what I expected" and "what the app actually loaded" is visible
+    # instead of having to be inferred from the final numbers.
+    invoicing_sheet_name: str = ""
+    invoicing_raw_rows: int = 0
+    invoicing_unique_guests: int = 0
+    visit_sheet_name: str = ""
+    visit_raw_rows: int = 0
+    visit_unique_guests: int = 0
+    visit_duplicates_dropped: int = 0
+    benefit_sheet_name: str = ""
+    benefit_raw_rows: int = 0
+    benefit_has_guest_code: bool = False
 
 
 def _select_and_rename(resolved: ResolvedReport, rename_map: dict[str, str]) -> pd.DataFrame:
@@ -95,6 +109,9 @@ def build_report(
     base = _select_and_rename(invoicing_report, invoice_fields)
     base["guest_code"] = normalize_guest_code(base["guest_code"])
     base["package_start_date"] = parse_mixed_dates(base["package_start_date"])
+    stats.invoicing_sheet_name = invoicing_report.sheet_name
+    stats.invoicing_raw_rows = len(base)
+    stats.invoicing_unique_guests = int(base["guest_code"].nunique())
     base = base.drop_duplicates(subset=["guest_code", "invoice_no"], keep="first")
     stats.invoice_rows_after_expand = len(base)
 
@@ -103,7 +120,11 @@ def build_report(
     visits = _select_and_rename(visit_report, visit_fields)
     visits["guest_code"] = normalize_guest_code(visits["guest_code"])
     visits["last_visit_date"] = parse_mixed_dates(visits["last_visit_date"])
-    visits, _ = dedupe_by_key(visits, "guest_code")
+    stats.visit_sheet_name = visit_report.sheet_name
+    stats.visit_raw_rows = len(visits)
+    stats.visit_unique_guests = int(visits["guest_code"].nunique())
+    visits, dropped = dedupe_by_key(visits, "guest_code")
+    stats.visit_duplicates_dropped = dropped
 
     merged = base.merge(visits, on="guest_code", how="left")
     stats.guests_without_last_visit = int(merged["last_visit_date"].isna().sum())
@@ -111,7 +132,10 @@ def build_report(
     # --- Step 3: attach balance sessions -------------------------------
     benefit_fields = {k: k for k in ["guest_code", "invoice_no", "balance_qty", "package_status"]}
     benefits = _select_and_rename(benefit_report, benefit_fields)
+    stats.benefit_sheet_name = benefit_report.sheet_name
+    stats.benefit_raw_rows = len(benefits)
     has_benefit_guest_code = "guest_code" in benefits.columns
+    stats.benefit_has_guest_code = has_benefit_guest_code
     if has_benefit_guest_code:
         benefits["guest_code"] = normalize_guest_code(benefits["guest_code"])
     benefits["balance_qty"] = pd.to_numeric(benefits["balance_qty"], errors="coerce")
@@ -163,6 +187,21 @@ def build_report(
     stats.final_closed_redeemed = int((final["match_reason"] == "Fully Redeemed & Inactive").sum())
     stats.final_active_unused = int((final["match_reason"] == "Active Package but Inactive").sum())
 
+    # Sanity check: every guest in `final` must have come from a real match in
+    # the Visit Report (that's the only source of a non-null Inactive Days),
+    # so the final unique-guest count can never exceed the Visit Report's own
+    # unique-guest count. If it ever does, something upstream is producing
+    # guest codes that don't trace back to a real source row -- surface it
+    # loudly rather than silently shipping a wrong report.
+    final_unique_guests = int(final["guest_code"].nunique())
+    if final_unique_guests > stats.visit_unique_guests:
+        stats.notes.append(
+            f"DATA INTEGRITY WARNING: the final report contains {final_unique_guests} "
+            f"unique guest(s), which is more than the {stats.visit_unique_guests} unique "
+            "guest(s) found in the Org/Latest-Visit Report. This should be impossible and "
+            "indicates a data or matching problem -- do not trust this report until resolved."
+        )
+
     if stats.guests_without_last_visit:
         stats.notes.append(
             f"{stats.guests_without_last_visit} guest(s) had no match in the "
@@ -177,11 +216,8 @@ def build_report(
             "be evaluated for the Fully-Redeemed rule (balance unknown)."
         )
 
-    # full_list = every Bangalore-roster guest x their packages, unfiltered.
-    # This is the Guest Report (X) Package Invoicing Report join from Step 3,
-    # carried through with the enrichment columns attached. Its (Guest Code,
-    # Package Invoice No) key set is verified to exactly match the DPR file's
-    # 2,090 unique pairs -- i.e. this is the dataset DPR itself represents.
+    # full_list = every invoiced guest x their packages, unfiltered, carried
+    # through with the enrichment columns (visit date, balance, status) attached.
     full_list = _format_display(merged)
     final = _format_display(final)
 

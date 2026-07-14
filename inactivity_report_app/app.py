@@ -66,8 +66,25 @@ if generate:
             f"Active Package but Inactive: {stats.final_active_unused}"
         )
 
-        with st.expander("Processing summary", expanded=False):
-            st.write(f"Package invoice rows: {stats.invoice_rows_after_expand}")
+        with st.expander("Processing summary", expanded=True):
+            st.write("**Package Invoicing Report**")
+            st.write(
+                f"- Sheet read: `{stats.invoicing_sheet_name}` — {stats.invoicing_raw_rows} row(s), "
+                f"{stats.invoicing_unique_guests} unique guest(s)"
+            )
+            st.write("**Org / Latest-Visit Guest Report**")
+            st.write(
+                f"- Sheet read: `{stats.visit_sheet_name}` — {stats.visit_raw_rows} row(s), "
+                f"{stats.visit_unique_guests} unique guest(s) before dedup "
+                f"({stats.visit_duplicates_dropped} duplicate guest row(s) dropped)"
+            )
+            st.write("**Package Benefit Report**")
+            st.write(
+                f"- Sheet read: `{stats.benefit_sheet_name}` — {stats.benefit_raw_rows} row(s), "
+                f"guest identifier column {'found' if stats.benefit_has_guest_code else 'NOT found (joined on Invoice No only)'}"
+            )
+            st.write("---")
+            st.write(f"Package invoice rows (after dedup): {stats.invoice_rows_after_expand}")
             st.write(f"Matched via Fully Redeemed & Inactive rule: {stats.final_closed_redeemed}")
             st.write(f"Matched via Active Package but Inactive rule: {stats.final_active_unused}")
             for note in stats.notes:
