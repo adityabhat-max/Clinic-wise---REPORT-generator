@@ -1,0 +1,13 @@
+# Raw client data (real guest/package export, not to be committed)
+Banglore package report.xlsx
+Banglore package report.xml
+
+# Test fixtures derived from the real client workbook above
+inactivity_report_app/tests/fixtures/*.xlsx
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Streamlit run logs
+inactivity_report_app/*.log
