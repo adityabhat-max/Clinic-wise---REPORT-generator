@@ -83,6 +83,7 @@ class PipelineStats:
     benefit_blank_guest_code_rows: int = 0
     invoicing_colliding_invoice_numbers: int = 0
     benefit_ambiguous_unresolved_rows: int = 0
+    future_last_visit_rows: int = 0
 
 
 def _select_and_rename(resolved: ResolvedReport, rename_map: dict[str, str]) -> pd.DataFrame:
@@ -234,6 +235,11 @@ def build_report(
     # --- Step 5: balance + inactivity -----------------------------------
     merged["balance_sessions"] = merged["balance_qty"]
     merged["inactive_days"] = (today - merged["last_visit_date"]).dt.days
+    # A Last Visit Date after today is impossible (can't have "last visited"
+    # in the future) -- almost always a source-data issue in the Visit
+    # Report rather than anything this pipeline can correct, so surface it
+    # rather than silently showing a negative Inactive Days number.
+    stats.future_last_visit_rows = int((merged["inactive_days"] < 0).sum())
 
     # --- Step 6: effective status (Benefit Report status wins, falls back
     #             to Invoicing Report status when there's no benefit match) ---
@@ -280,6 +286,14 @@ def build_report(
             "indicates a data or matching problem -- do not trust this report until resolved."
         )
 
+    if stats.future_last_visit_rows:
+        stats.notes.append(
+            f"{stats.future_last_visit_rows} row(s) have a Last Visit Date after "
+            "today, which is impossible -- this points to a data-entry issue in "
+            "the Org/Latest-Visit Report itself (e.g. a future appointment date "
+            "recorded instead of an actual past visit), not something this app "
+            "can correct. Those rows show a negative Inactive Days value."
+        )
     if stats.invoicing_colliding_invoice_numbers:
         if stats.benefit_ambiguous_unresolved_rows:
             stats.notes.append(
