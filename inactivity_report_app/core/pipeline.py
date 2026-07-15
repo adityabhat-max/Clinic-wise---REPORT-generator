@@ -237,9 +237,13 @@ def build_report(
     merged["inactive_days"] = (today - merged["last_visit_date"]).dt.days
     # A Last Visit Date after today is impossible (can't have "last visited"
     # in the future) -- almost always a source-data issue in the Visit
-    # Report rather than anything this pipeline can correct, so surface it
-    # rather than silently showing a negative Inactive Days number.
+    # Report rather than anything this pipeline can correct. Treat it the
+    # same as a missing Last Visit Date (inactivity can't be computed) rather
+    # than showing a meaningless negative number: blank it out here so those
+    # rows are correctly excluded from the inclusion rules below, same as
+    # guests with no visit match at all.
     stats.future_last_visit_rows = int((merged["inactive_days"] < 0).sum())
+    merged.loc[merged["inactive_days"] < 0, "inactive_days"] = pd.NA
 
     # --- Step 6: effective status (Benefit Report status wins, falls back
     #             to Invoicing Report status when there's no benefit match) ---
@@ -292,7 +296,8 @@ def build_report(
             "today, which is impossible -- this points to a data-entry issue in "
             "the Org/Latest-Visit Report itself (e.g. a future appointment date "
             "recorded instead of an actual past visit), not something this app "
-            "can correct. Those rows show a negative Inactive Days value."
+            "can correct. Their Inactive Days is left blank rather than showing "
+            "a negative number, and they're excluded from the Inactivity Report."
         )
     if stats.invoicing_colliding_invoice_numbers:
         if stats.benefit_ambiguous_unresolved_rows:
