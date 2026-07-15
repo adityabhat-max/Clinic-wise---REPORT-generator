@@ -84,6 +84,7 @@ class PipelineStats:
     invoicing_colliding_invoice_numbers: int = 0
     benefit_ambiguous_unresolved_rows: int = 0
     future_last_visit_rows: int = 0
+    last_visit_filled_from_creation_date: int = 0
 
 
 def _select_and_rename(resolved: ResolvedReport, rename_map: dict[str, str]) -> pd.DataFrame:
@@ -244,16 +245,23 @@ def build_report(
 
     # --- Step 5: balance + inactivity -----------------------------------
     merged["balance_sessions"] = merged["balance_qty"]
-    merged["inactive_days"] = (today - merged["last_visit_date"]).dt.days
+
     # A Last Visit Date after today is impossible (can't have "last visited"
-    # in the future) -- almost always a source-data issue in the Visit
-    # Report rather than anything this pipeline can correct. Treat it the
-    # same as a missing Last Visit Date (inactivity can't be computed) rather
-    # than showing a meaningless negative number: blank it out here so those
-    # rows are correctly excluded from the inclusion rules below, same as
-    # guests with no visit match at all.
-    stats.future_last_visit_rows = int((merged["inactive_days"] < 0).sum())
-    merged.loc[merged["inactive_days"] < 0, "inactive_days"] = pd.NA
+    # in the future) -- almost always a source-data issue in the Visit Report
+    # rather than anything this pipeline can correct. Blank it out here so
+    # it's treated as unusable, same as a guest with no visit match at all.
+    is_future_visit = merged["last_visit_date"] > today
+    stats.future_last_visit_rows = int(is_future_visit.sum())
+    merged.loc[is_future_visit, "last_visit_date"] = pd.NaT
+
+    # Wherever Last Visit Date is still unusable (no visit record at all, or
+    # just blanked above for being a future date), fall back to Package
+    # Creation Date as the best available substitute -- it's better than no
+    # activity signal at all for a guest we otherwise know nothing about.
+    stats.last_visit_filled_from_creation_date = int(merged["last_visit_date"].isna().sum())
+    merged["last_visit_date"] = merged["last_visit_date"].fillna(merged["package_start_date"])
+
+    merged["inactive_days"] = (today - merged["last_visit_date"]).dt.days
 
     # --- Step 6: effective status (Benefit Report status wins, falls back
     #             to Invoicing Report status when there's no benefit match) ---
@@ -302,12 +310,18 @@ def build_report(
 
     if stats.future_last_visit_rows:
         stats.notes.append(
-            f"{stats.future_last_visit_rows} row(s) have a Last Visit Date after "
+            f"{stats.future_last_visit_rows} row(s) had a Last Visit Date after "
             "today, which is impossible -- this points to a data-entry issue in "
             "the Org/Latest-Visit Report itself (e.g. a future appointment date "
             "recorded instead of an actual past visit), not something this app "
-            "can correct. Their Inactive Days is left blank rather than showing "
-            "a negative number, and they're excluded from the Inactivity Report."
+            "can correct. Their Package Creation Date was used as a substitute "
+            "for Inactive Days instead."
+        )
+    if stats.last_visit_filled_from_creation_date:
+        stats.notes.append(
+            f"{stats.last_visit_filled_from_creation_date} row(s) had no usable "
+            "Last Visit Date (missing, or an invalid future date); Package "
+            "Creation Date was used in its place to compute Inactive Days."
         )
     if stats.invoicing_colliding_invoice_numbers:
         if stats.benefit_ambiguous_unresolved_rows:
@@ -352,9 +366,9 @@ def build_report(
         )
     if stats.guests_without_last_visit:
         stats.notes.append(
-            f"{stats.guests_without_last_visit} guest(s) had no match in the "
-            "Org/Latest-Visit report; their inactivity could not be computed "
-            "and they are excluded from the final report."
+            f"{stats.guests_without_last_visit} guest(s) had no Last Visit Date "
+            "in the Org/Latest-Visit report; Package Creation Date was used as "
+            "a substitute to compute Inactive Days."
         )
     if stats.invoices_without_benefit_match:
         stats.notes.append(
