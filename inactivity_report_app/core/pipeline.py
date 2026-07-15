@@ -25,10 +25,14 @@ Pipeline steps (see README for the full write-up):
      that report's benefit-type rows for a given invoice (a package with
      several benefit lines is only "fully redeemed" once every one of them
      is at zero balance).
-  5. Compute Inactive Days = today - Last Visit Date.
+  5. Compute Inactive Days = today - Last Visit Date. Also compute
+     Customer Activity ("Inactive" if Inactive Days >= threshold, else
+     "Active") -- a plain comparison against the threshold, independent
+     of package status.
   6. Determine each package's effective status (prefers the Package Benefit
      Report's status, falls back to the Invoicing Report's status when a
-     package has no benefit-detail match).
+     package has no benefit-detail match). A blank status (neither report
+     had one) is treated as Closed.
   7. A package makes the final report if EITHER:
        a) status is Closed AND Balance Sessions == 0 AND Inactive Days >= threshold
           ("fully redeemed and gone quiet"), or
@@ -107,6 +111,7 @@ _DISPLAY_RENAME = {
     "last_visit_date": "Last Visit Date",
     "inactive_days": "Inactive Days",
     "effective_status": "Package Status",
+    "customer_activity": "Customer Activity",
 }
 
 
@@ -284,6 +289,11 @@ def build_report(
 
     merged["inactive_days"] = (today - merged["last_visit_date"]).dt.days
 
+    # Customer Activity: purely a comparison of Inactive Days against the
+    # inactivity threshold, independent of package status.
+    merged["customer_activity"] = "Active"
+    merged.loc[merged["inactive_days"] >= inactivity_threshold_days, "customer_activity"] = "Inactive"
+
     # --- Step 6: effective status (Benefit Report status wins, falls back
     #             to Invoicing Report status when there's no benefit match) ---
     has_package_status = "package_status" in merged.columns
@@ -296,6 +306,12 @@ def build_report(
         merged["effective_status"] = merged["status"]
     else:
         merged["effective_status"] = pd.NA
+    # A blank Package Status (no value in either source report) is treated
+    # as Closed.
+    is_blank_status = merged["effective_status"].isna() | (
+        merged["effective_status"].astype(str).str.strip() == ""
+    )
+    merged.loc[is_blank_status, "effective_status"] = "Closed"
     status_norm = merged["effective_status"].astype(str).str.strip().str.lower()
 
     # --- Step 7: inclusion rules -----------------------------------------
