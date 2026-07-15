@@ -69,7 +69,8 @@ if generate:
         with st.expander("Processing summary", expanded=True):
             st.write("**Package Invoicing Report**")
             st.write(
-                f"- Sheet read: `{stats.invoicing_sheet_name}` — {stats.invoicing_raw_rows} row(s), "
+                f"- Sheet read: `{stats.invoicing_sheet_name}` — {stats.invoicing_raw_rows} row(s) "
+                f"after removing {stats.invoicing_exact_duplicate_rows_dropped} exact-duplicate row(s), "
                 f"{stats.invoicing_unique_guests_before_scope} unique guest(s) before location scoping"
             )
             st.write(

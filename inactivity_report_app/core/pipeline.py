@@ -14,10 +14,12 @@ Pipeline steps (see README for the full write-up):
      Benefit Reports are NOT guaranteed to be, and can come back as
      org-wide dumps covering every location. That guest-code set is used
      as an implicit location filter in step 2.
-  2. Base = Package Invoicing Report, restricted to only guest codes that
-     are also present in the Visit Report (see step 1), deduped on (Guest
-     Code, Package Invoice No). Rows for guests outside that scope (i.e.
-     a different location) are dropped and counted.
+  2. Base = Package Invoicing Report, first stripped of any fully duplicate
+     rows (identical across every column -- the same as selecting the
+     whole sheet and running Excel's "Remove Duplicates"), then restricted
+     to only guest codes that are also present in the Visit Report (see
+     step 1), deduped on (Guest Code, Package Invoice No). Rows for guests
+     outside that scope (i.e. a different location) are dropped and counted.
   3. Attach Last Visit Date from the Visit Report loaded in step 1.
   4. Attach Balance Sessions from the Package Benefit Report, summed across
      that report's benefit-type rows for a given invoice (a package with
@@ -67,6 +69,7 @@ class PipelineStats:
     # between "what I expected" and "what the app actually loaded" is visible
     # instead of having to be inferred from the final numbers.
     invoicing_sheet_name: str = ""
+    invoicing_exact_duplicate_rows_dropped: int = 0
     invoicing_raw_rows: int = 0
     invoicing_unique_guests: int = 0
     invoicing_unique_guests_before_scope: int = 0
@@ -163,6 +166,19 @@ def build_report(
 
     # --- Step 2: base = one row per package invoice, scoped to the Visit
     #             Report's guests ---------------------------------------
+    # Package Invoicing Report exports can contain fully duplicate rows
+    # (identical across every column) -- an export artifact, not two
+    # distinct invoices. Strip those first, the same as selecting the whole
+    # sheet and running Excel's "Remove Duplicates", before anything else.
+    invoicing_rows_before_exact_dedupe = len(invoicing_report.df)
+    invoicing_df_deduped = invoicing_report.df.drop_duplicates(keep="first")
+    stats.invoicing_exact_duplicate_rows_dropped = invoicing_rows_before_exact_dedupe - len(invoicing_df_deduped)
+    invoicing_report = ResolvedReport(
+        df=invoicing_df_deduped,
+        columns=invoicing_report.columns,
+        sheet_name=invoicing_report.sheet_name,
+    )
+
     invoice_fields = {k: k for k in ["guest_code", "invoice_no", "package_name", "package_start_date", "status"]}
     base = _select_and_rename(invoicing_report, invoice_fields)
     base["guest_code"] = normalize_guest_code(base["guest_code"])
@@ -322,6 +338,12 @@ def build_report(
             f"{stats.last_visit_filled_from_creation_date} row(s) had no usable "
             "Last Visit Date (missing, or an invalid future date); Package "
             "Creation Date was used in its place to compute Inactive Days."
+        )
+    if stats.invoicing_exact_duplicate_rows_dropped:
+        stats.notes.append(
+            f"{stats.invoicing_exact_duplicate_rows_dropped} fully duplicate row(s) "
+            "(identical across every column) were removed from the Package "
+            "Invoicing Report before processing."
         )
     if stats.invoicing_colliding_invoice_numbers:
         if stats.benefit_ambiguous_unresolved_rows:
