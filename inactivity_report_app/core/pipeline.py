@@ -145,6 +145,16 @@ def build_report(
     stats.visit_blank_guest_code_rows = int(visits["guest_code"].isna().sum())
     visits = visits[visits["guest_code"].notna()].copy()
     stats.visit_unique_guests = int(visits["guest_code"].nunique())
+    # When a guest code appears more than once, keep the row with the most
+    # recent VALID Last Visit Date rather than whichever row happens to come
+    # first in the file -- "first" is arbitrary and can pick a stale or wrong
+    # date over a more recent, correct one for the same guest. A future date
+    # is a data error, not "more recent" in any useful sense, so it must not
+    # be preferred over a real, valid past date just because it sorts later
+    # -- rank valid (non-future) dates first, then by recency within those.
+    is_future = visits["last_visit_date"] > today
+    visits["_sort_key"] = visits["last_visit_date"].where(~is_future)
+    visits = visits.sort_values("_sort_key", ascending=False, na_position="last").drop(columns="_sort_key")
     visits, dropped = dedupe_by_key(visits, "guest_code")
     stats.visit_duplicates_dropped = dropped
 
