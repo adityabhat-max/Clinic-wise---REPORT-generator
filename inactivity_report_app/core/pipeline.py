@@ -88,6 +88,7 @@ class PipelineStats:
     benefit_ambiguous_unresolved_rows: int = 0
     future_last_visit_rows: int = 0
     last_visit_filled_from_creation_date: int = 0
+    guests_without_last_visit_sample: list[str] = field(default_factory=list)
 
 
 def _select_and_rename(resolved: ResolvedReport, rename_map: dict[str, str]) -> pd.DataFrame:
@@ -212,6 +213,10 @@ def build_report(
     # --- Step 3: attach last visit date ---------------------------------
     merged = base.merge(visits, on="guest_code", how="left")
     stats.guests_without_last_visit = int(merged["last_visit_date"].isna().sum())
+    if stats.guests_without_last_visit:
+        stats.guests_without_last_visit_sample = sorted(
+            merged.loc[merged["last_visit_date"].isna(), "guest_code"].unique()
+        )[:15]
 
     # --- Step 4: attach balance sessions -------------------------------
     benefit_fields = {k: k for k in ["guest_code", "invoice_no", "balance_qty", "package_status", "package_name"]}
@@ -259,7 +264,7 @@ def build_report(
     merged = merged.merge(benefit_totals, on=benefit_join_keys, how="left", suffixes=("", "_benefit"))
     stats.invoices_without_benefit_match = int(merged["balance_qty"].isna().sum())
 
-    # --- Step 5: balance + inactivity -----------------------------------
+    # --- Step 5: balance + inactivity ----------------------------------
     merged["balance_sessions"] = merged["balance_qty"]
 
     # A Last Visit Date after today is impossible (can't have "last visited"
@@ -387,10 +392,14 @@ def build_report(
             "Benefit Report had no Guest Code at all and were ignored."
         )
     if stats.guests_without_last_visit:
+        sample_text = ", ".join(stats.guests_without_last_visit_sample)
+        more = stats.guests_without_last_visit - len(stats.guests_without_last_visit_sample)
+        if more > 0:
+            sample_text += f", and {more} more"
         stats.notes.append(
             f"{stats.guests_without_last_visit} guest(s) had no Last Visit Date "
             "in the Org/Latest-Visit report; Package Creation Date was used as "
-            "a substitute to compute Inactive Days."
+            f"a substitute to compute Inactive Days. Guest Code(s): {sample_text}"
         )
     if stats.invoices_without_benefit_match:
         stats.notes.append(
