@@ -3,12 +3,16 @@ Cleaning utilities: date parsing, guest-code normalization, dedup.
 
 These exports were produced by a raw data dump (no Excel number formatting),
 so date-like columns arrive as a mix of:
+  - Native Excel date/datetime cells (already a real date -- openpyxl hands
+    these to pandas as `datetime`/`Timestamp` objects, not text)
   - Excel serial numbers (e.g. 44814.318449074075)
   - dd-mm-yyyy text strings (e.g. "13-04-2026")
   - blank/missing values
 `parse_mixed_dates` normalizes all of these to pandas Timestamps.
 """
 from __future__ import annotations
+
+import datetime
 
 import pandas as pd
 
@@ -18,6 +22,15 @@ _SERIAL_MIN, _SERIAL_MAX = 20000, 60000  # plausible date-serial range (~1954-20
 def _parse_one(value) -> pd.Timestamp:
     if pd.isna(value) or value == "":
         return pd.NaT
+
+    # Already a real date -- use it directly. Do NOT fall through to the text
+    # branch below: converting a datetime to a string ("2026-07-12 00:00:00")
+    # and re-parsing it with dayfirst=True is NOT a safe round-trip -- pandas
+    # can misread that ISO-ordered string as day-first (year=2026, "07" as
+    # day, "12" as month), silently turning July 12 into December 7. Skipping
+    # the text conversion entirely avoids that ambiguity altogether.
+    if isinstance(value, datetime.date):
+        return pd.Timestamp(value)
 
     if isinstance(value, (int, float)):
         if _SERIAL_MIN <= value <= _SERIAL_MAX:

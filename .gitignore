@@ -2,6 +2,7 @@
 Banglore package report.xlsx
 Banglore package report.xml
 mumbai/
+Reports - VV/
 
 # Test fixtures derived from the real client workbook above
 inactivity_report_app/tests/fixtures/*.xlsx
