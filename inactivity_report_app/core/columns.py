@@ -96,6 +96,7 @@ PACKAGE_BENEFIT_SCHEMA = ReportSchema(
         FieldSpec("balance_qty", ["Balance Quantity", "Balance Sessions", "BalanceQty", "Balance"]),
         FieldSpec("package_status", ["Package Status", "PackageStatus", "Status"], required=False),
         FieldSpec("package_name", ["Package Name", "PackageName"], required=False),
+        FieldSpec("benefit_name", ["Benefit Name", "BenefitName"], required=False),
     ],
 )
 

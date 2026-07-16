@@ -60,7 +60,7 @@ if generate:
                 inactivity_threshold_days=int(threshold),
             )
 
-        st.success(f"Report generated: {stats.final_report_rows} row(s) match the criteria.")
+        st.success(f"Report generated: {stats.final_report_rows} package(s) match the criteria.")
         st.caption(
             f"Fully Redeemed & Inactive: {stats.final_closed_redeemed}  |  "
             f"Active Package but Inactive: {stats.final_active_unused}"

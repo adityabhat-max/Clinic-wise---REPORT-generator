@@ -1,11 +1,15 @@
 """
 Core merge + business-logic pipeline.
 
-Grain: the final report is one row per (guest, package invoice) — a guest
-with three packages can appear up to three times, once per package that
-matches one of the inclusion rules below. This matches how Package Benefit
-Report and Package Invoicing Report are themselves shaped (one row per
-invoice).
+Grain: the inclusion rules (step 7) are evaluated one row per (guest,
+package invoice). The displayed output is then expanded further, to one
+row per (guest, package invoice, benefit line) -- see step 8 -- so a
+package invoice with two benefit lines (e.g. a facial + an injectable on
+the same invoice) appears as two rows, each with its own Benefit Name,
+ccat category, and that benefit's own Balance Quantity. Which packages
+are included is unaffected by this -- that's still decided at the invoice
+level, using the summed Balance Sessions across all of an invoice's
+benefit lines (step 4).
 
 Pipeline steps (see README for the full write-up):
   1. Load the Org/Latest-Visit Guest Report and take its set of Guest Codes.
@@ -40,6 +44,13 @@ Pipeline steps (see README for the full write-up):
           ("still has sessions on the books but hasn't been in")
      Refunded packages are never included. Each row is tagged with a
      "Match Reason" showing which rule (a or b) included it.
+  8. Expand both full_list and final to one row per benefit line (see
+     Grain, above): each package invoice's individual Package Benefit
+     Report lines are joined back in, each carrying its own Benefit Name,
+     ccat category (looked up from the bundled Segmentation reference
+     table -- see core/segmentation.py), and that line's own Balance
+     Quantity. An invoice with no benefit-line match at all still appears
+     once, with these three columns blank.
 
 build_report() returns (full_list, final, stats):
   - full_list: every invoiced guest x their packages, scoped to the Visit
@@ -55,6 +66,7 @@ import pandas as pd
 
 from core.cleaning import dedupe_by_key, normalize_guest_code, normalize_text, parse_mixed_dates
 from core.io_utils import ResolvedReport
+from core.segmentation import lookup_ccat
 
 INACTIVITY_THRESHOLD_DAYS = 60
 
@@ -112,6 +124,9 @@ _DISPLAY_RENAME = {
     "inactive_days": "Inactive Days",
     "effective_status": "Package Status",
     "customer_activity": "Customer Activity",
+    "benefit_name": "Benefit Name",
+    "ccat": "ccat",
+    "benefit_balance_qty": "Balance Quantity",
 }
 
 
@@ -224,7 +239,9 @@ def build_report(
         )[:15]
 
     # --- Step 4: attach balance sessions -------------------------------
-    benefit_fields = {k: k for k in ["guest_code", "invoice_no", "balance_qty", "package_status", "package_name"]}
+    benefit_fields = {
+        k: k for k in ["guest_code", "invoice_no", "balance_qty", "package_status", "package_name", "benefit_name"]
+    }
     benefits = _select_and_rename(benefit_report, benefit_fields)
     stats.benefit_sheet_name = benefit_report.sheet_name
     stats.benefit_raw_rows = len(benefits)
@@ -424,6 +441,27 @@ def build_report(
             "in the final report via the Active-but-inactive rule, but cannot "
             "be evaluated for the Fully-Redeemed rule (balance unknown)."
         )
+
+    # --- Step 8: expand into one row per benefit line, with ccat ---------
+    # Everything above (inclusion in `final`, Balance Sessions, effective
+    # status) is unchanged and still computed at one-row-per-invoice grain.
+    # This step is purely about how the report is DISPLAYED: each invoice's
+    # individual benefit lines (e.g. "Photo Facial Pro" + "Face-Dermapen4"
+    # on the same invoice) are broken out into their own row, each carrying
+    # its own Benefit Name, ccat category (looked up from the bundled
+    # Segmentation reference table), and that specific benefit's own
+    # Balance Quantity. Invoices with no benefit-line match at all still
+    # appear once, with these three columns blank.
+    if "benefit_name" in benefits.columns:
+        benefit_detail = benefits[benefit_join_keys + ["benefit_name", "balance_qty"]].rename(
+            columns={"balance_qty": "benefit_balance_qty"}
+        )
+        benefit_detail["ccat"] = lookup_ccat(benefit_detail["benefit_name"])
+    else:
+        benefit_detail = pd.DataFrame(columns=benefit_join_keys + ["benefit_name", "benefit_balance_qty", "ccat"])
+
+    merged = merged.merge(benefit_detail, on=benefit_join_keys, how="left")
+    final = final.merge(benefit_detail, on=benefit_join_keys, how="left")
 
     # full_list = every invoiced guest x their packages, scoped to the Visit
     # Report's location and unfiltered by the inactivity rules, carried

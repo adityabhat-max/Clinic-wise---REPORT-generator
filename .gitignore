@@ -7,6 +7,11 @@ Reports - VV/
 # Test fixtures derived from the real client workbook above
 inactivity_report_app/tests/fixtures/*.xlsx
 
+# Loose copy of the Segmentation reference table at the repo root -- the
+# copy the app actually uses is committed at
+# inactivity_report_app/core/reference_data/segmentation.xlsx
+/Segmentation.xlsx
+
 # Python bytecode
 __pycache__/
 *.pyc
