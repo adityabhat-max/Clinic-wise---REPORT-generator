@@ -488,10 +488,26 @@ def build_guest_summary(df: pd.DataFrame) -> pd.DataFrame:
       - Summary: every distinct ccat category across the guest's packages,
         comma-separated.
     """
-    grouped = df.groupby("Guest Code")
-    package_status = grouped["Package Status"].agg(lambda s: "Active" if (s == "Active").any() else "Closed")
-    customer_activity = grouped["Customer Activity"].agg(lambda s: "Active" if (s == "Active").any() else "Inactive")
-    summary = grouped["ccat"].agg(lambda s: ", ".join(sorted(s.dropna().unique())))
+    # Vectorized instead of groupby().agg(lambda ...) -- the lambda form calls
+    # back into Python once per guest, which is fine on a small report but
+    # takes several seconds once a report reaches tens of thousands of rows
+    # (an org-wide upload, not a single location). `.any()` on a grouped
+    # boolean Series is a single vectorized reduction; the ccat Summary
+    # dedupes (Guest Code, ccat) pairs first so the per-group join only ever
+    # runs over a handful of rows per guest instead of every source row.
+    package_status = (
+        (df["Package Status"] == "Active").groupby(df["Guest Code"]).any().map({True: "Active", False: "Closed"})
+    )
+    customer_activity = (
+        (df["Customer Activity"] == "Active")
+        .groupby(df["Guest Code"])
+        .any()
+        .map({True: "Active", False: "Inactive"})
+    )
+    cat_pairs = (
+        df[["Guest Code", "ccat"]].dropna(subset=["ccat"]).drop_duplicates().sort_values(["Guest Code", "ccat"])
+    )
+    summary = cat_pairs.groupby("Guest Code")["ccat"].agg(", ".join).reindex(package_status.index, fill_value="")
 
     return pd.DataFrame(
         {
