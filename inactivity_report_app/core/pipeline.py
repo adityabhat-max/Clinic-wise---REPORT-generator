@@ -132,6 +132,7 @@ _DISPLAY_RENAME = {
     "invoice_no": "Package Invoice No",
     "package_name": "Package Name",
     "package_start_date": "Package Creation Date",
+    "package_year_bucket": "Dated 2025",
     "last_visit_date": "Last Visit Date",
     "inactive_days": "Inactive Days",
     "effective_status": "Package Status",
@@ -217,6 +218,11 @@ def build_report(
     base = _select_and_rename(invoicing_report, invoice_fields)
     base["guest_code"] = normalize_guest_code(base["guest_code"])
     base["package_start_date"] = parse_mixed_dates(base["package_start_date"])
+    # Dated 2025: which era a package was created in. A blank/unparseable
+    # Package Creation Date falls into the "start of zenoti" bucket too,
+    # since NaT >= any real date is always False.
+    base["package_year_bucket"] = "start of zenoti - 31st dec 2024"
+    base.loc[base["package_start_date"] >= pd.Timestamp("2025-01-01"), "package_year_bucket"] = "1st Jan 2025"
     stats.invoicing_sheet_name = invoicing_report.sheet_name
     stats.invoicing_raw_rows = len(base)
     stats.invoicing_blank_guest_code_rows = int(base["guest_code"].isna().sum())
