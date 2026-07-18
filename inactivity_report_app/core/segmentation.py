@@ -7,11 +7,8 @@ any single location's exports -- the same Services -> category mapping
 applies everywhere, so it's bundled with the app rather than uploaded.
 """
 from __future__ import annotations
-
 from pathlib import Path
-
 import pandas as pd
-
 from core.cleaning import normalize_text
 
 _SEGMENTATION_PATH = Path(__file__).parent / "reference_data" / "segmentation.xlsx"

@@ -107,6 +107,18 @@ class PipelineStats:
     guests_without_last_visit_sample: list[str] = field(default_factory=list)
 
 
+def _ccat_summary_by_guest(df: pd.DataFrame, guest_col: str = "guest_code", ccat_col: str = "ccat") -> pd.Series:
+    """
+    For each guest code in df, every distinct ccat category across their
+    rows, comma-separated. Vectorized: dedupes (guest, ccat) pairs first so
+    the per-group string-join only runs over a handful of rows per guest
+    instead of every source row -- matters once a report reaches tens of
+    thousands of rows (an org-wide upload).
+    """
+    pairs = df[[guest_col, ccat_col]].dropna(subset=[ccat_col]).drop_duplicates().sort_values([guest_col, ccat_col])
+    return pairs.groupby(guest_col)[ccat_col].agg(", ".join)
+
+
 def _select_and_rename(resolved: ResolvedReport, rename_map: dict[str, str]) -> pd.DataFrame:
     """Pull only the resolved logical-field columns out of a report, renamed to their logical key."""
     cols_present = {k: v for k, v in rename_map.items() if k in resolved.columns}
@@ -125,7 +137,8 @@ _DISPLAY_RENAME = {
     "effective_status": "Package Status",
     "customer_activity": "Customer Activity",
     "benefit_name": "Benefit Name",
-    "ccat": "ccat",
+    "ccat": "Individual Category",
+    "guest_summary": "Summary",
     "benefit_balance_qty": "Balance Quantity",
 }
 
@@ -468,6 +481,14 @@ def build_report(
     merged["ccat"] = merged["ccat"].fillna("Other")
     final["ccat"] = final["ccat"].fillna("Other")
 
+    # Summary: every distinct ccat category across a guest's own rows in
+    # this same table, comma-separated, shown on every one of that guest's
+    # rows. full_list's Summary is scoped to all of a guest's packages;
+    # final's Summary is scoped only to the packages that made the filtered
+    # report -- each table summarizes only what's actually in it.
+    merged["guest_summary"] = merged["guest_code"].map(_ccat_summary_by_guest(merged))
+    final["guest_summary"] = final["guest_code"].map(_ccat_summary_by_guest(final))
+
     # full_list = every invoiced guest x their packages, scoped to the Visit
     # Report's location and unfiltered by the inactivity rules, carried
     # through with the enrichment columns (visit date, balance, status) attached.
@@ -504,10 +525,9 @@ def build_guest_summary(df: pd.DataFrame) -> pd.DataFrame:
         .any()
         .map({True: "Active", False: "Inactive"})
     )
-    cat_pairs = (
-        df[["Guest Code", "ccat"]].dropna(subset=["ccat"]).drop_duplicates().sort_values(["Guest Code", "ccat"])
+    summary = _ccat_summary_by_guest(df, guest_col="Guest Code", ccat_col="Individual Category").reindex(
+        package_status.index, fill_value=""
     )
-    summary = cat_pairs.groupby("Guest Code")["ccat"].agg(", ".join).reindex(package_status.index, fill_value="")
 
     return pd.DataFrame(
         {
