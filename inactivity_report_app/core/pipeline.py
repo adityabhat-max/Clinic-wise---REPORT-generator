@@ -132,7 +132,6 @@ _DISPLAY_RENAME = {
     "invoice_no": "Package Invoice No",
     "package_name": "Package Name",
     "package_start_date": "Package Creation Date",
-    "package_year_bucket": "Dated 2025",
     "last_visit_date": "Last Visit Date",
     "inactive_days": "Inactive Days",
     "effective_status": "Package Status",
@@ -141,6 +140,7 @@ _DISPLAY_RENAME = {
     "ccat": "Individual Category",
     "guest_summary": "Summary",
     "benefit_balance_qty": "Balance Quantity",
+    "package_year_bucket": "Dated 2025",
 }
 
 
@@ -222,7 +222,7 @@ def build_report(
     # Package Creation Date falls into the "start of zenoti" bucket too,
     # since NaT >= any real date is always False.
     base["package_year_bucket"] = "start of zenoti - 31st dec 2024"
-    base.loc[base["package_start_date"] >= pd.Timestamp("2025-01-01"), "package_year_bucket"] = "1st Jan 2025"
+    base.loc[base["package_start_date"] >= pd.Timestamp("2025-01-01"), "package_year_bucket"] = "1st Jan 2025 till date"
     stats.invoicing_sheet_name = invoicing_report.sheet_name
     stats.invoicing_raw_rows = len(base)
     stats.invoicing_blank_guest_code_rows = int(base["guest_code"].isna().sum())
