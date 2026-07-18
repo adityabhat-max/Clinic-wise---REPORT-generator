@@ -11,6 +11,7 @@ def dataframe_to_excel_bytes(
     sheet_name: str = "Inactivity Report",
     summary: dict[str, object] | None = None,
     guest_summary: pd.DataFrame | None = None,
+    extra_sheets: dict[str, pd.DataFrame] | None = None,
 ) -> bytes:
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
@@ -23,4 +24,7 @@ def dataframe_to_excel_bytes(
                 next_row += len(summary_df) + 2  # header row + blank-row gap
             if guest_summary is not None:
                 guest_summary.to_excel(writer, index=False, sheet_name="Summary", startrow=next_row)
+        if extra_sheets:
+            for extra_sheet_name, extra_df in extra_sheets.items():
+                extra_df.to_excel(writer, index=False, sheet_name=extra_sheet_name)
     return buffer.getvalue()

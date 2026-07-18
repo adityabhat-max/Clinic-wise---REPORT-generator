@@ -544,3 +544,32 @@ def build_guest_summary(df: pd.DataFrame) -> pd.DataFrame:
             "Summary": summary.values,
         }
     )
+
+
+_FULL_BENEFIT_LIST_DROP_COLUMNS = ["Benefit Name", "Individual Category", "Balance Quantity"]
+
+
+def build_full_benefit_list(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    A copy of the (benefit-line-expanded) report with Benefit Name,
+    Individual Category, and Balance Quantity removed, then deduped back to
+    one row per invoice -- the same as selecting the whole sheet in Excel
+    and running Remove Duplicates, since those three columns were the only
+    thing differentiating multiple benefit-line rows for the same invoice.
+    """
+    reduced = df.drop(columns=_FULL_BENEFIT_LIST_DROP_COLUMNS, errors="ignore")
+    return reduced.drop_duplicates()
+
+
+def build_dated_status_pivot(full_benefit_list_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Static cross-tab of Dated 2025 (rows) x Package Status (columns),
+    counting Package Invoice No, with row/column Grand Totals -- the same
+    numbers an Excel PivotTable of "Count of Package Invoice No" with those
+    two fields would show, computed once as plain cells instead of a live,
+    interactive PivotTable object.
+    """
+    ct = pd.crosstab(full_benefit_list_df["Dated 2025"], full_benefit_list_df["Package Status"])
+    ct["Grand Total"] = ct.sum(axis=1)
+    ct.loc["Grand Total"] = ct.sum(axis=0)
+    return ct.reset_index()

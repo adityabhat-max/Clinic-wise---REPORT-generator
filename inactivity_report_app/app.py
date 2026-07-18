@@ -17,7 +17,13 @@ from core.columns import (
 )
 from core.export import dataframe_to_excel_bytes
 from core.io_utils import ReportValidationError, load_and_validate
-from core.pipeline import INACTIVITY_THRESHOLD_DAYS, build_guest_summary, build_report
+from core.pipeline import (
+    INACTIVITY_THRESHOLD_DAYS,
+    build_dated_status_pivot,
+    build_full_benefit_list,
+    build_guest_summary,
+    build_report,
+)
 
 st.set_page_config(page_title="Client Inactivity Report", layout="wide")
 st.title("Client Inactivity Report")
@@ -103,9 +109,14 @@ elif generate:
             final_unique_guests = final_df["Guest Code"].nunique()
             st.caption(f"{final_unique_guests} unique guest(s) in this filtered report.")
             st.dataframe(final_df, use_container_width=True)
+            final_benefit_list = build_full_benefit_list(final_df)
             excel_bytes = dataframe_to_excel_bytes(
                 final_df,
                 guest_summary=build_guest_summary(final_df),
+                extra_sheets={
+                    "Full Benefit List": final_benefit_list,
+                    "Pivot Table": build_dated_status_pivot(final_benefit_list),
+                },
             )
             st.download_button(
                 "Download Inactivity Report (Excel)",
@@ -124,10 +135,15 @@ elif generate:
                 "inactivity rule above."
             )
             st.dataframe(full_list_df, use_container_width=True)
+            full_benefit_list = build_full_benefit_list(full_list_df)
             full_excel_bytes = dataframe_to_excel_bytes(
                 full_list_df,
                 sheet_name="Full Package List",
                 guest_summary=build_guest_summary(full_list_df),
+                extra_sheets={
+                    "Full Benefit List": full_benefit_list,
+                    "Pivot Table": build_dated_status_pivot(full_benefit_list),
+                },
             )
             st.download_button(
                 "Download Full Package List (Excel)",
