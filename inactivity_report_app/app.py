@@ -104,6 +104,7 @@ if generate:
             excel_bytes = dataframe_to_excel_bytes(
                 final_df,
                 summary={"Unique Guests": final_unique_guests},
+                guest_summary=build_guest_summary(final_df),
             )
             st.download_button(
                 "Download Inactivity Report (Excel)",
@@ -126,6 +127,7 @@ if generate:
                 full_list_df,
                 sheet_name="Full Package List",
                 summary={"Unique Guests": full_unique_guests},
+                guest_summary=build_guest_summary(full_list_df),
             )
             st.download_button(
                 "Download Full Package List (Excel)",
