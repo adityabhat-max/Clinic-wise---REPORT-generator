@@ -451,7 +451,10 @@ def build_report(
     # its own Benefit Name, ccat category (looked up from the bundled
     # Segmentation reference table), and that specific benefit's own
     # Balance Quantity. Invoices with no benefit-line match at all still
-    # appear once, with these three columns blank.
+    # appear once, with Benefit Name/Balance Quantity blank. A blank ccat
+    # (no benefit-line match, or a Benefit Name not covered by the
+    # Segmentation reference table) is filled with "Other" rather than
+    # left blank.
     if "benefit_name" in benefits.columns:
         benefit_detail = benefits[benefit_join_keys + ["benefit_name", "balance_qty"]].rename(
             columns={"balance_qty": "benefit_balance_qty"}
@@ -462,6 +465,8 @@ def build_report(
 
     merged = merged.merge(benefit_detail, on=benefit_join_keys, how="left")
     final = final.merge(benefit_detail, on=benefit_join_keys, how="left")
+    merged["ccat"] = merged["ccat"].fillna("Other")
+    final["ccat"] = final["ccat"].fillna("Other")
 
     # full_list = every invoiced guest x their packages, scoped to the Visit
     # Report's location and unfiltered by the inactivity rules, carried
@@ -470,3 +475,29 @@ def build_report(
     final = _format_display(final)
 
     return full_list, final, stats
+
+
+def build_guest_summary(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Roll a (possibly benefit-line-expanded) report up to one row per unique
+    Guest Code:
+      - Package Status: "Active" if any of the guest's packages is Active,
+        else "Closed".
+      - Customer Activity: "Active" if any of the guest's packages is
+        Active (i.e. Inactive Days < threshold), else "Inactive".
+      - Summary: every distinct ccat category across the guest's packages,
+        comma-separated.
+    """
+    grouped = df.groupby("Guest Code")
+    package_status = grouped["Package Status"].agg(lambda s: "Active" if (s == "Active").any() else "Closed")
+    customer_activity = grouped["Customer Activity"].agg(lambda s: "Active" if (s == "Active").any() else "Inactive")
+    summary = grouped["ccat"].agg(lambda s: ", ".join(sorted(s.dropna().unique())))
+
+    return pd.DataFrame(
+        {
+            "Guest Code": package_status.index,
+            "Package Status": package_status.values,
+            "Customer Activity": customer_activity.values,
+            "Summary": summary.values,
+        }
+    )

@@ -17,7 +17,7 @@ from core.columns import (
 )
 from core.export import dataframe_to_excel_bytes
 from core.io_utils import ReportValidationError, load_and_validate
-from core.pipeline import INACTIVITY_THRESHOLD_DAYS, build_report
+from core.pipeline import INACTIVITY_THRESHOLD_DAYS, build_guest_summary, build_report
 
 st.set_page_config(page_title="Client Inactivity Report", layout="wide")
 st.title("Client Inactivity Report")
