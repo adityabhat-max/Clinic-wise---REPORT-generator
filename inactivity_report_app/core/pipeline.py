@@ -129,6 +129,7 @@ def _select_and_rename(resolved: ResolvedReport, rename_map: dict[str, str]) -> 
 
 _DISPLAY_RENAME = {
     "guest_code": "Guest Code",
+    "phone": "Mobile Number",
     "invoice_no": "Package Invoice No",
     "package_name": "Package Name",
     "package_start_date": "Package Creation Date",
@@ -175,7 +176,7 @@ def build_report(
     # on the Invoicing Report, since that report (and the Benefit Report)
     # can come back as an org-wide export covering every location instead
     # of just the one being reported on.
-    visit_fields = {k: k for k in ["guest_code", "last_visit_date"]}
+    visit_fields = {k: k for k in ["guest_code", "last_visit_date", "phone"]}
     visits = _select_and_rename(visit_report, visit_fields)
     visits["guest_code"] = normalize_guest_code(visits["guest_code"])
     visits["last_visit_date"] = parse_mixed_dates(visits["last_visit_date"])

@@ -81,6 +81,7 @@ VISIT_REPORT_SCHEMA = ReportSchema(
     fields=[
         FieldSpec("guest_code", ["UserCode", "Guest Code", "GuestCode", "Guest_Code"]),
         FieldSpec("last_visit_date", ["lastvisit", "LastVisit", "Last Visit", "Last Visit Date"]),
+        FieldSpec("phone", ["Phone No", "Phone Number", "Mobile Number", "Mobile", "Phone", "PhoneNo"], required=False),
     ],
 )
 
