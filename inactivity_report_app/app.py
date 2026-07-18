@@ -45,7 +45,9 @@ generate = st.button("Generate Report", type="primary", disabled=not all(
 if not all([visit_file, benefit_file, invoicing_file]):
     st.info("Upload all three files to enable report generation.")
 
-if generate:
+if generate and not all([visit_file, benefit_file, invoicing_file]):
+    st.warning("One or more files weren't received -- please re-upload all three and click Generate Report again.")
+elif generate:
     try:
         with st.spinner("Reading and validating uploaded files..."):
             visit_resolved = load_and_validate(visit_file, VISIT_REPORT_SCHEMA)
