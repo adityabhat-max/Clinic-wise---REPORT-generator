@@ -343,12 +343,13 @@ def build_report(
         merged["effective_status"] = merged["status"]
     else:
         merged["effective_status"] = pd.NA
-    # A blank Package Status (no value in either source report) is treated
-    # as Closed.
-    is_blank_status = merged["effective_status"].isna() | (
-        merged["effective_status"].astype(str).str.strip() == ""
-    )
-    merged.loc[is_blank_status, "effective_status"] = "Closed"
+    # A blank Package Status (no value in either source report), or a
+    # non-standard "Inactive" status, is treated as Closed -- Active,
+    # Closed, and Refunded are the only meaningful package statuses.
+    status_stripped = merged["effective_status"].astype(str).str.strip()
+    is_blank_status = merged["effective_status"].isna() | (status_stripped == "")
+    is_inactive_status = status_stripped.str.lower() == "inactive"
+    merged.loc[is_blank_status | is_inactive_status, "effective_status"] = "Closed"
     status_norm = merged["effective_status"].astype(str).str.strip().str.lower()
 
     # --- Step 7: inclusion rules -----------------------------------------
